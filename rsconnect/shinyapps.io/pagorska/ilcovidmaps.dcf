@@ -1,0 +1,12 @@
+name: ilcovidmaps
+title: ilcovidmaps
+username:
+account: pagorska
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2249302
+bundleId: 3113860
+url: https://pagorska.shinyapps.io/ilcovidmaps/
+when: 1588817759.22618
+asMultiple: FALSE
+asStatic: FALSE
