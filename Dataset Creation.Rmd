@@ -1,0 +1,306 @@
+---
+title: "Creating Illinois COVID Data"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library("jsonlite")
+library("dplyr")
+options(tigris_use_cache = TRUE)
+```
+
+
+```{r}
+allZips <- read.csv("data/zip_code_database.csv")
+illinois <- allZips[allZips$state == "IL",]
+illinois <- illinois[names(illinois) %in% c("zip", "primary_city", "county", "irs_estimated_population_2015")]
+names(illinois) <- c("zip", "primary_city", "county", "population_2015")
+head(illinois)
+illinoisConfirmed <- illinois
+illinoisTested <- illinois
+illinoisPercentSick <- illinois
+```
+
+```{r}
+files <- c("data/04-07-2020.json", "data/04-09-2020.json", "data/04-11-2020.json", "data/04-13-2020.json", "data/04-14-2020.json", "data/04-20-2020.json", "data/04-21-2020.json", "data/04-23-2020.json", "data/04-25-2020.json", "data/04-27-2020.json", "data/04-28-2020.json", "data/04-29-2020.json", "data/04-30-2020.json", "data/05-01-2020.json", "data/05-04-2020.json", "data/05-05-2020.json", "data/05-06-2020.json")
+
+dates <- c()
+
+for(f in files) {
+  result <- fromJSON(f)
+  day <- result$LastUpdateDate$day
+  month <- result$LastUpdateDate$month
+  year <- 2020
+  date <- paste(year, "-", month, "-", day, sep = "")
+  date <- paste0(as.Date(date))
+  #dates.append(date)
+  
+  
+  result <- result$zip_values
+  result <- result[names(result) %in% c("zip", "confirmed_cases", "total_tested")]
+  result$zip <- as.integer(result$zip)
+  result <- result[result$zip %in% illinois$zip,]
+  
+  
+  confirmed <- result[names(result) %in% c("zip", "confirmed_cases")]
+  tested <- result[names(result) %in% c("zip", "total_tested")]
+  
+  
+  names(confirmed) <- c("zip", date)
+  
+  if (length(names(result)) == 3) {
+    result$percentPositive <- result$confirmed_cases / result$total_tested
+    percent <- result[names(result) %in% c("zip", "percentPositive")]
+    
+    names(percent) <- c("zip", date)
+    names(tested) <- c("zip", date)
+    illinoisPercentSick <- percent %>% full_join(illinoisPercentSick)
+    illinoisTested <- tested %>% full_join(illinoisTested)
+    
+    names(result) <- c("zip", paste(month, "/", day, "/2020 confirmed", sep = ""), paste(month, "/", day, "/2020 tested", sep = ""), paste(month, "/", day, "/2020 positive", sep = ""))
+  } else {
+    names(result) <- c("zip", paste(month, "/", day, "/2020 confirmed", sep = ""))
+  }
+  #confirmed_cases
+  #total_tested
+  illinois <- result %>% full_join(illinois)
+  illinoisConfirmed <- confirmed %>% full_join(illinoisConfirmed)
+  #print(head(result))
+}
+illinois[is.na(illinois)] <- 0
+illinois <- illinois[ , order(names(illinois))]
+illinoisPercentSick[is.na(illinoisPercentSick)] <- 0
+illinoisPercentSick <- illinoisPercentSick[ , order(names(illinoisPercentSick))]
+illinoisConfirmed[is.na(illinoisConfirmed)] <- 0
+illinoisConfirmed <- illinoisConfirmed[ , order(names(illinoisConfirmed))]
+illinoisTested[is.na(illinoisTested)] <- 0
+illinoisTested <- illinoisTested[ , order(names(illinoisTested))]
+head(illinois)
+head(illinoisPercentSick)
+head(illinoisConfirmed)
+head(illinoisTested)
+
+```
+
+
+```{r}
+#doubling rates:
+
+illinoisDoubles <- illinoisConfirmed[names(illinoisConfirmed) %in% c("zip", "primary_city", "county", "population_2015", "2020-05-05", "2020-04-21")]
+
+illinoisDoubles$increase <- illinoisDoubles$"2020-05-05" - illinoisDoubles$"2020-04-21"
+
+illinoisDoubles <- illinoisDoubles[order(illinoisDoubles$increase),]
+
+head(illinoisDoubles)
+tail(illinoisDoubles)
+
+map1 <- illinoisDoubles[names(illinoisDoubles) %in% c("zip", "primary_city", "2020-05-05", "2020-04-21", "increase")]
+head(map1)
+names(map1) <- c("apr20", "may4","city", "zipcode",   "increase")
+
+
+head(map1)
+tail(map1)
+
+```
+
+```{r}
+r2 <- read.csv("ilcovidmaps/percentSick.csv")
+names(r2)
+map2 <- r2[names(r2) %in% c("zip", "X2020.05.05", "county", "primary_city", "population_2015")]
+
+names(map2) <- c("today", "county", "pop", "city", "zip")
+map2[map2$zip == 60434,]$today <- 1
+
+map2 <- map2[order(map2$today),]
+tail(map2)
+```
+
+
+```{r}
+library(tigris) 
+char_zips <- zctas(cb = TRUE, starts_with = "6")
+
+
+char_zips <- geo_join(char_zips, 
+                      map1, 
+                      by_sp = "GEOID10", 
+                      by_df = "zipcode",
+                      how = "left")
+
+```
+
+```{r}
+char_zips <- char_zips[char_zips$zipcode %in% map1$zipcode,]
+head(char_zips)
+```
+
+
+
+```{r}
+dim(char_zips)
+char_zips <- char_zips[char_zips$zipcode %in% illinois$zip,]
+dim(char_zips)
+```
+
+
+
+```{r}
+library(leaflet) 
+pal <- colorNumeric(
+  palette = "Greens",
+  domain = char_zips@data$increase)
+
+# create labels for zipcodes
+labels <- 
+  paste0(
+    char_zips@data$city, ", ",
+    char_zips@data$GEOID10, "<br/>",
+    "Cases on April 20th: ",
+    char_zips@data$apr20, "<br/>",
+    "Cases on May 4th: ", 
+    char_zips@data$may4, "<br/>",
+    "New cases: ",
+    char_zips@data$increase) %>%
+  lapply(htmltools::HTML)
+```
+
+```{r}
+char_zips %>% 
+  leaflet %>% 
+  # add base map
+  addProviderTiles("CartoDB") %>% 
+  # add zip codes
+  addPolygons(fillColor = ~pal(increase),
+              weight = 1,
+              opacity = 1,
+              color = "white",
+              dashArray = "3",
+              fillOpacity = 0.7,
+              highlight = highlightOptions(weight = 2,
+                                           color = "#666",
+                                           dashArray = "",
+                                           fillOpacity = 0.7,
+                                           bringToFront = TRUE),
+              label = labels) %>%
+  # add legend
+  addLegend(pal = pal, 
+            values = ~increase, 
+            opacity = 0.7, 
+            title = htmltools::HTML("Increase in <br> 
+                                    COVID-19 cases <br> 
+                                    by Zip Code"),
+            position = "bottomright")
+```
+
+
+
+```{r}
+write.csv(illinois, "combined.csv")
+write.csv(illinoisPercentSick, "percentSick.csv")
+write.csv(illinoisConfirmed, "confirmed.csv")
+write.csv(illinoisTested, "tested.csv")
+```
+
+
+```{r}
+library(ggplot2)
+```
+
+
+
+```{r}
+confirmed <- read.csv("ilcovidmaps/confirmed.csv")
+    head(confirmed)
+    doubles <- confirmed[names(confirmed) %in% c("zip", "primary_city", "X2020.05.04", "X2020.04.20")]
+    
+    names(doubles) <- c("apr20", "may4","city", "zipcode")
+    
+    
+    doubles$increase <- doubles$may4 - doubles$apr20
+    head(doubles)
+    doubles <- doubles[order(doubles$increase),]
+    
+    map1 <- doubles[names(doubles) %in% c("zipcode", "city","apr20", "may4", "increase")]
+    
+    names(map1) <- c("apr20", "may4","city", "zipcode",  "increase")
+    head(map1)
+```
+
+```{r}
+confirmed <- read.csv("confirmed.csv")
+
+
+today <- confirmed[names(confirmed) %in% c("zip", "primary_city", "X2020.05.06", "population_2015")]
+names(today) <- c("t", "pop", "city", "zipcode")
+head(today)
+```
+
+
+```{r}
+char_zips <- zctas(cb = TRUE, starts_with = "6")
+
+char_zips_tests <- char_zips
+
+char_zips_today <- char_zips
+
+char_zips_today <- geo_join(char_zips_today, today, by_sp = "GEOID10", by_df = "zipcode", how = "left")
+
+char_zips_today$sick100k <- char_zips_today$t / char_zips_today$pop * 100000
+```
+
+
+
+```{r}
+
+char_zips_today <- char_zips_today[char_zips_today$zipcode %in% today$zipcode,]
+
+head(char_zips_today)
+
+
+```
+
+```{r}
+char_zips_today[char_zips_today$sick100k > 2000,]
+
+
+
+```
+
+```{r}
+names(illinois)
+counties <- illinois[names(illinois) %in% c("county", "zip", "primary_city")]
+```
+
+
+```{r}
+head(counties)
+write.csv(counties, "regions.csv")
+```
+
+
+
+```{r}
+
+cook <- illinois[illinois$county == "Cook County",]
+head(cook)
+tests <- sum(cook$`5/6/2020 tested`)
+confirmed <- sum(cook$`5/6/2020 confirmed`)
+print(confirmed/tests)
+```
+
+
+
+```{r}
+rrr <- sum(doubles[doubles$city %in% cook$primary_city,]$apr20)
+rrr2 <- sum(doubles[doubles$city %in% cook$primary_city,]$may4)
+print((rrr2 - rrr)/rrr )
+```
+
+
+
